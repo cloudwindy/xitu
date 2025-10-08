@@ -49,7 +49,7 @@ type StandaloneLorebook struct {
 	Data Lorebook `json:"data"` // 设定集核心数据
 }
 
-// Lorebook 定义了角色设定集。
+// Lorebook 定义的一个角色设定集
 type Lorebook struct {
 	Name              string                 `json:"name,omitempty"`               // 设定集名称 (可选)
 	Description       string                 `json:"description,omitempty"`        // 设定集描述 (可选)
@@ -60,7 +60,7 @@ type Lorebook struct {
 	Entries           []LorebookEntry        `json:"entries"`                      // 设定集条目数组
 }
 
-// LorebookEntry 定义了设定集中的单个条目。
+// LorebookEntry 定义设定集中的单个条目
 type LorebookEntry struct {
 	Keys           []string               `json:"keys"`                     // 触发关键词
 	Content        string                 `json:"content"`                  // 注入的内容

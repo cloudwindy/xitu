@@ -89,7 +89,7 @@ func loadCharacter(characterID string) (*ccv3.CharacterCardV3, error) {
 	return &card, nil
 }
 
-func buildPrompt(card *ccv3.CharacterCardV3) string {
+func buildPrompt(prompt string, card *ccv3.CharacterCardV3) string {
 	r := strings.NewReplacer(
 		"{{char}}", card.Data.Name,
 		"{{user}}", "User",
@@ -98,16 +98,25 @@ func buildPrompt(card *ccv3.CharacterCardV3) string {
 }
 
 func main() {
+	if err := godotenv.Load(); err != nil {
+		log.Warn().Err(err).Msg("Failed to read env file, reading from environment.")
+	}
+	mode := os.Getenv("XITU_MODE")
+	if mode == "debug" {
+		gin.SetMode(gin.DebugMode)
+	} else if mode == "release" {
+		gin.SetMode(gin.ReleaseMode)
+	} else {
+		log.Warn().Msg("XITU_MODE not valid, using 'debug'.")
+		gin.SetMode(gin.DebugMode)
+	}
 	setupLogger()
+
 	info, ok := debug.ReadBuildInfo()
 	if !ok {
 		log.Warn().Msg("Failed to read build info.")
 	} else {
-		log.Info().Msg("xitu " + info.Main.Version + " initializing...")
-	}
-
-	if err := godotenv.Load(); err != nil {
-		log.Info().Msg(".env not found, reading from environment.")
+		log.Info().Msg("xitu " + info.Main.Version)
 	}
 
 	baseURL := os.Getenv("OPENAI_BASE_URL")
@@ -137,7 +146,12 @@ func main() {
 		}
 
 		c.JSON(http.StatusOK, gin.H{
-			"name": card.Data.Name,
+			"name":         card.Data.Name,
+			"version":      card.Data.CharacterVersion,
+			"creator":      card.Data.Creator,
+			"creatornotes": card.Data.CreatorNotes,
+			"tags":         card.Data.Tags,
+			"firstmes":     card.Data.FirstMes,
 		})
 	})
 
@@ -155,11 +169,11 @@ func main() {
 			return
 		}
 
-		finalSystemPrompt := buildPrompt(card)
+		systemPrompt := buildPrompt(card.Data.Description, card)
 		messages := []openai.ChatCompletionMessage{
 			{
 				Role:    openai.ChatMessageRoleSystem,
-				Content: finalSystemPrompt,
+				Content: systemPrompt,
 			},
 		}
 		messages = append(messages, req.History...)
@@ -192,8 +206,7 @@ func main() {
 		c.JSON(http.StatusOK, gin.H{"reply": aiReply})
 	})
 
-	log.Info().Msg("Starting server on port 8080...")
 	if err := r.Run(":8080"); err != nil {
-		log.Fatal().Err(err).Msg("Failed to start server")
+		log.Fatal().Err(err).Msg("Failed to start server.")
 	}
 }
