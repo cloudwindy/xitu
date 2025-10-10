@@ -2,15 +2,13 @@ package main
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
 	"net/http"
 	"os"
 	"runtime/debug"
-	"strings"
 	"time"
 
-	"github.com/cloudwindy/xitu/ccv3"
+	"github.com/cloudwindy/xitu/st"
 	"github.com/gin-gonic/gin"
 	"github.com/joho/godotenv"
 	"github.com/rs/zerolog"
@@ -19,7 +17,7 @@ import (
 )
 
 type ChatRequest struct {
-	CharacterID string                         `json:"characterId" binding:"required"`
+	CharacterID string                         `json:"character_id" binding:"required"`
 	History     []openai.ChatCompletionMessage `json:"history"`
 }
 
@@ -67,11 +65,11 @@ func GinLogger() gin.HandlerFunc {
 			Str("ip", c.ClientIP()).
 			Dur("latency", latency).
 			Str("user_agent", c.Request.UserAgent()).
-			Msg("Request processed")
+			Msg("Request processed.")
 	}
 }
 
-func loadCharacter(characterID string) (*ccv3.CharacterCardV3, error) {
+func loadCharacter(characterID string) (st.Card, error) {
 	filePath := fmt.Sprintf("characters/%s.json", characterID)
 
 	data, err := os.ReadFile(filePath)
@@ -80,21 +78,13 @@ func loadCharacter(characterID string) (*ccv3.CharacterCardV3, error) {
 		return nil, fmt.Errorf("character not found")
 	}
 
-	var card ccv3.CharacterCardV3
-	if err := json.Unmarshal(data, &card); err != nil {
+	card, err := st.NewCard(data)
+	if err != nil {
 		log.Error().Err(err).Str("file_path", filePath).Msg("Failed to parse character json")
 		return nil, fmt.Errorf("failed to parse character card")
 	}
 
-	return &card, nil
-}
-
-func buildPrompt(prompt string, card *ccv3.CharacterCardV3) string {
-	r := strings.NewReplacer(
-		"{{char}}", card.Data.Name,
-		"{{user}}", "User",
-	)
-	return r.Replace(card.Data.SystemPrompt)
+	return card, nil
 }
 
 func main() {
@@ -146,12 +136,12 @@ func main() {
 		}
 
 		c.JSON(http.StatusOK, gin.H{
-			"name":         card.Data.Name,
-			"version":      card.Data.CharacterVersion,
-			"creator":      card.Data.Creator,
-			"creatornotes": card.Data.CreatorNotes,
-			"tags":         card.Data.Tags,
-			"firstmes":     card.Data.FirstMes,
+			"name":         card.GetData().Name,
+			"version":      card.GetData().CharacterVersion,
+			"creator":      card.GetData().Creator,
+			"creatornotes": card.GetData().CreatorNotes,
+			"tags":         card.GetData().Tags,
+			"firstmes":     card.GetData().FirstMes,
 		})
 	})
 
@@ -169,17 +159,15 @@ func main() {
 			return
 		}
 
-		systemPrompt := buildPrompt(card.Data.Description, card)
-		messages := []openai.ChatCompletionMessage{
-			{
-				Role:    openai.ChatMessageRoleSystem,
-				Content: systemPrompt,
-			},
-		}
-		messages = append(messages, req.History...)
-
 		config := openai.DefaultConfig(apiKey)
 		config.BaseURL = baseURL
+
+		messages, err := card.Apply(req.History)
+		if err != nil {
+			log.Error().Err(err).Str("character_id", req.CharacterID).Msg("Failed to apply messages.")
+			c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+			return
+		}
 
 		client := openai.NewClientWithConfig(config)
 		resp, err := client.CreateChatCompletion(
@@ -191,8 +179,8 @@ func main() {
 			},
 		)
 		if err != nil {
-			log.Error().Err(err).Str("character_id", req.CharacterID).Msg("OpenAI API call failed")
-			c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to get response from AI"})
+			log.Error().Err(err).Str("character_id", req.CharacterID).Msg("OpenAI API call failed.")
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to get response from AI."})
 			return
 		}
 

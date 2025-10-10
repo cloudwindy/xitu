@@ -1,5 +1,14 @@
 package ccv3
 
+// Role 定义消息角色
+type Role int
+
+const (
+	RoleSystem = iota
+	RoleUser
+	RoleAssistant
+)
+
 // CharacterCardV3 角色卡V3的顶层结构
 type CharacterCardV3 struct {
 	Spec        string              `json:"spec"`         // 规范标识，必须为 "chara_card_v3"
@@ -64,7 +73,7 @@ type Lorebook struct {
 type LorebookEntry struct {
 	Keys           []string               `json:"keys"`                     // 触发关键词
 	Content        string                 `json:"content"`                  // 注入的内容
-	Extensions     map[string]interface{} `json:"extensions"`               // 扩展数据
+	Extensions     LorebookEntryExtension `json:"extensions"`               // 扩展数据
 	Enabled        bool                   `json:"enabled"`                  // 是否启用
 	InsertionOrder int                    `json:"insertion_order"`          // 插入顺序
 	CaseSensitive  bool                   `json:"case_sensitive,omitempty"` // 是否大小写敏感 (可选)
@@ -77,5 +86,84 @@ type LorebookEntry struct {
 	Comment       string      `json:"comment,omitempty"`        // 注释 (可选)
 	Selective     bool        `json:"selective,omitempty"`      // 是否启用选择性激活 (与secondary_keys配合, 可选)
 	SecondaryKeys []string    `json:"secondary_keys,omitempty"` // 第二触发关键词 (可选)
-	Position      string      `json:"position,omitempty"`       // 注入位置 (可选, 'before_char' 或 'after_char')
+	Position      string      `json:"position,omitempty"`       // 注入位置 (无效)
 }
+
+// LorebookEntryExtension 定义设定集条目的扩展字段
+type LorebookEntryExtension struct {
+	Position                  LorebookInsertionPosition `json:"position,omitempty"`
+	ExcludeRecursion          bool                      `json:"exclude_recursion,omitempty"`
+	DisplayIndex              int                       `json:"display_index,omitempty"`
+	Probability               int                       `json:"probability,omitempty"`
+	UseProbability            bool                      `json:"useProbability,omitempty"`
+	Depth                     int                       `json:"depth,omitempty"`
+	SelectiveLogic            int                       `json:"selectiveLogic,omitempty"`
+	Group                     string                    `json:"group,omitempty"`
+	GroupOverride             bool                      `json:"group_override,omitempty"`
+	GroupWeight               int                       `json:"group_weight,omitempty"`
+	PreventRecursion          bool                      `json:"prevent_recursion,omitempty"`
+	DelayUntilRecursion       bool                      `json:"delay_until_recursion,omitempty"`
+	ScanDepth                 int                       `json:"scan_depth,omitempty"`
+	MatchWholeWords           bool                      `json:"match_whole_words,omitempty"`
+	UseGroupScoring           bool                      `json:"use_group_scoring,omitempty"`
+	CaseSensitive             bool                      `json:"case_sensitive,omitempty"`
+	AutomationId              string                    `json:"automation_id,omitempty"`
+	Role                      Role                      `json:"role,omitempty"`
+	Vectorized                bool                      `json:"vectorized,omitempty"`
+	Sticky                    int                       `json:"sticky,omitempty"`
+	Cooldown                  int                       `json:"cooldown,omitempty"`
+	Delay                     int                       `json:"delay,omitempty"`
+	MatchPersonaDescription   bool                      `json:"match_persona_description,omitempty"`
+	MatchCharacterDescription bool                      `json:"match_character_description,omitempty"`
+	MatchCharacterPersonality bool                      `json:"match_character_personality,omitempty"`
+	MatchCharacterDepthPrompt bool                      `json:"match_character_depth_prompt,omitempty"`
+	MatchScenario             bool                      `json:"match_scenario,omitempty"`
+	MatchCreatorNotes         bool                      `json:"match_creator_notes,omitempty"`
+	Triggers                  []interface{}             `json:"triggers,omitempty"`
+}
+
+// LorebookInsertionPosition 定义设定集条目的插入位置
+type LorebookInsertionPosition int
+
+const (
+	/*
+		Before Char Defs:
+		World Info entry is inserted before the character's description and scenario.
+		Has a moderate impact on the conversation.
+	*/
+	LorebookInsertionBeforeCharDefs LorebookInsertionPosition = iota
+	/*
+		After Char Defs:
+		World Info entry is inserted after the character's description and scenario.
+		Has a greater impact on the conversation.
+	*/
+	LorebookInsertionAfterCharDefs
+	/*
+		Before Example Messages:
+		The World Info entry is parsed as an example dialogue block and inserted before the examples provided by the character card.
+	*/
+	LorebookInsertionBeforeExampleMessages
+	/*
+		After Example Messages:
+		The World Info entry is parsed as an example dialogue block and inserted after the examples provided by the character card.
+	*/
+	LorebookInsertionAfterExampleMessages
+	/*
+		@D:
+		World Info entry is inserted at a specific depth in the chat.
+		Depth 0 being the bottom of the prompt.
+	*/
+	LorebookInsertionAtDepth
+	/*
+		Top of AN:
+		World Info entry is inserted at the top of Author's Note content.
+		Has a variable impact depending on the Author's Note position.
+	*/
+	LorebookInsertionTopOfAuthorsNote
+	/*
+		Bottom of AN:
+		World Info entry is inserted at the bottom of Author's Note content.
+		Has a variable impact depending on the Author's Note position.
+	*/
+	LorebookInsertionBottomOfAuthorsNote
+)
