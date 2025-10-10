@@ -9,22 +9,22 @@ const (
 	RoleAssistant
 )
 
-// CharacterCardV3 角色卡V3的顶层结构
-type CharacterCardV3 struct {
-	Spec        string              `json:"spec"`         // 规范标识，必须为 "chara_card_v3"
-	SpecVersion string              `json:"spec_version"` // 规范版本，必须为 "3.0"
-	Data        CharacterCardV3Data `json:"data"`         // 包含角色卡核心数据的对象
+// CharacterCard 角色卡V3的顶层结构
+type CharacterCard struct {
+	Spec        string            `json:"spec"`         // 规范标识，必须为 "chara_card_v3"
+	SpecVersion string            `json:"spec_version"` // 规范版本，必须为 "3.0"
+	Data        CharacterCardData `json:"data"`         // 包含角色卡核心数据的对象
 }
 
-// CharacterCardV3Data 包含了角色的所有核心信息
-type CharacterCardV3Data struct {
+// CharacterCardData 包含了角色的所有核心信息
+type CharacterCardData struct {
 	Name                    string                 `json:"name"`                      // 角色名称
 	Description             string                 `json:"description"`               // 角色描述
 	Tags                    []string               `json:"tags"`                      // 标签数组
 	Creator                 string                 `json:"creator"`                   // 创建者
 	CharacterVersion        string                 `json:"character_version"`         // 角色版本
 	MesExample              string                 `json:"mes_example"`               // 聊天示例
-	Extensions              map[string]interface{} `json:"extensions"`                // 扩展数据，用于存储特定应用的数据
+	Extensions              CharacterCardExtension `json:"extensions"`                // 扩展数据，用于存储特定应用的数据
 	SystemPrompt            string                 `json:"system_prompt"`             // 系统提示
 	PostHistoryInstructions string                 `json:"post_history_instructions"` // 后历史指令
 	FirstMes                string                 `json:"first_mes"`                 // 首条消息（默认问候语）
@@ -42,6 +42,10 @@ type CharacterCardV3Data struct {
 	GroupOnlyGreetings       []string          `json:"group_only_greetings"`                 // 仅群聊使用的问候语
 	CreationDate             int64             `json:"creation_date,omitempty"`              // 创建日期 (Unix时间戳, 秒, 可选)
 	ModificationDate         int64             `json:"modification_date,omitempty"`          // 修改日期 (Unix时间戳, 秒, 可选)
+}
+
+type CharacterCardExtension struct {
+	DepthPrompt string `json:"depth_prompt,omitempty"` // 作者笔记 (可选)
 }
 
 // Asset 定义一个与角色关联的资源
