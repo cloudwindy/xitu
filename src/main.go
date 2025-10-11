@@ -69,7 +69,12 @@ func GinLogger() gin.HandlerFunc {
 	}
 }
 
+var cache = make(map[string]st.Card)
+
 func loadCharacter(characterID string) (st.Card, error) {
+	if card, ok := cache[characterID]; ok {
+		return card, nil
+	}
 	filePath := fmt.Sprintf("characters/%s.json", characterID)
 
 	data, err := os.ReadFile(filePath)
@@ -83,6 +88,7 @@ func loadCharacter(characterID string) (st.Card, error) {
 		log.Error().Err(err).Str("file_path", filePath).Msg("Failed to parse character json")
 		return nil, fmt.Errorf("failed to parse character card")
 	}
+	cache[characterID] = card
 
 	return card, nil
 }
@@ -144,6 +150,32 @@ func main() {
 			"firstmes":     card.GetData().FirstMes,
 		})
 	})
+
+	if gin.Mode() == gin.DebugMode {
+		r.POST("/api/debug/chat", func(c *gin.Context) {
+			var req ChatRequest
+			if err := c.ShouldBindJSON(&req); err != nil {
+				log.Warn().Err(err).Msg("Invalid request body")
+				c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid request body"})
+				return
+			}
+
+			card, err := loadCharacter(req.CharacterID)
+			if err != nil {
+				c.JSON(http.StatusNotFound, gin.H{"error": err.Error()})
+				return
+			}
+
+			messages, err := card.Apply(req.History)
+			if err != nil {
+				log.Error().Err(err).Str("character_id", req.CharacterID).Msg("Failed to apply messages.")
+				c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+				return
+			}
+
+			c.JSON(http.StatusOK, gin.H{"messages": messages})
+		})
+	}
 
 	r.POST("/api/chat", func(c *gin.Context) {
 		var req ChatRequest

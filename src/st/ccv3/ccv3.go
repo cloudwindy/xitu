@@ -45,7 +45,13 @@ type CharacterCardData struct {
 }
 
 type CharacterCardExtension struct {
-	DepthPrompt string `json:"depth_prompt,omitempty"` // 作者笔记 (可选)
+	DepthPrompt CharacterCardDepthPrompt `json:"depth_prompt,omitempty"` // 深度提示 (可选)
+}
+
+type CharacterCardDepthPrompt struct {
+	Prompt string `json:"prompt"` // 深度提示内容
+	Depth  int    `json:"depth"`  // 深度值
+	Role   string `json:"role"`   // 角色 system, user, assistant
 }
 
 // Asset 定义一个与角色关联的资源

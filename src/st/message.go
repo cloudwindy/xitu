@@ -6,23 +6,23 @@ import (
 	"github.com/sashabaranov/go-openai"
 )
 
-type message struct {
+type messageType struct {
 	Role    roleType
 	Content string
 }
 
-func parseOpenAIMessage(msg openai.ChatCompletionMessage) (message, error) {
+func parseOpenAIMessage(msg openai.ChatCompletionMessage) (messageType, error) {
 	role, err := parseOpenAIRole(msg.Role)
 	if err != nil {
-		return message{}, err
+		return messageType{}, err
 	}
-	return message{
+	return messageType{
 		Role:    role,
 		Content: msg.Content,
 	}, nil
 }
 
-func (msg message) ToOpenAIMessage() openai.ChatCompletionMessage {
+func (msg messageType) ToOpenAIMessage() openai.ChatCompletionMessage {
 	return openai.ChatCompletionMessage{
 		Role:    msg.Role.ToOpenAIRole(),
 		Content: msg.Content,
@@ -32,9 +32,9 @@ func (msg message) ToOpenAIMessage() openai.ChatCompletionMessage {
 type roleType int
 
 const (
-	user roleType = iota
+	system roleType = iota
+	user
 	assistant
-	system
 )
 
 func parseOpenAIRole(role string) (roleType, error) {

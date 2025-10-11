@@ -10,51 +10,37 @@ import (
 	"github.com/rs/zerolog/log"
 )
 
-func (c *cardType) applyWorldInfo(charDefs []message, history []message) ([]message, error) {
-	wi, err := c.checkWorldInfo(history)
-	if err != nil {
-		return nil, err
+func (c *cardType) applyLorebookEntries(messages *[]messageType, entries lorebookEntriesType) {
+	if len(entries) > 0 {
+		for _, role := range entries.Roles() {
+			roleEntries := entries.Role(role)
+			content := strings.Join(roleEntries.Contents(), "\n")
+			c.pushPrompt(messages, role, content)
+		}
 	}
-	if wi == nil {
-		return append(charDefs, history...), nil
-	}
-	messages := make([]message, 0, len(charDefs)+len(history)+wi.Len())
-	for _, entry := range wi.BeforeCharDefs {
-		c.pushPrompt(&messages, entry.Role, entry.Content)
-	}
-	messages = append(messages, charDefs...)
-	for _, entry := range wi.AfterCharDefs {
-		c.pushPrompt(&messages, entry.Role, entry.Content)
-	}
-	return messages, nil
 }
 
-func (c *cardType) checkWorldInfo(messages []message) (*worldInfoType, error) {
-	if c.data.CharacterBook == nil || len(c.data.CharacterBook.Entries) == 0 {
+func (c *cardType) checkWorldInfo(messages []messageType) (*worldInfoType, error) {
+	if len(c.lorebook) == 0 {
 		return nil, nil
-	}
-
-	entries, err := newLorebookEntriesFromCCV3(c.data.CharacterBook.Entries)
-	if err != nil {
-		return nil, err
 	}
 
 	buf := c.buildWorldInfoBuffer(messages)
 	activated := make(lorebookEntriesType, 0)
+	lorebook := c.lorebook.Copy()
 
-	for _, entry := range entries {
+	for _, entry := range lorebook.Sort() {
 		if entry.activated {
 			activated.Push(entry)
 			continue
 		}
 
-		haystack := buf.Get(entry)
-		if haystack == "" {
+		if buf.Write(entry) == 0 {
 			continue
 		}
 
 		for _, key := range entry.Keys {
-			if buf.MatchKeys(haystack, key, entry) {
+			if buf.Match(key, entry) {
 				entry.activated = true
 				break
 			}
@@ -66,8 +52,21 @@ func (c *cardType) checkWorldInfo(messages []message) (*worldInfoType, error) {
 		}
 	}
 
-	if len(activated) == 0 {
-		return nil, nil
+	if dp := c.data.Extensions.DepthPrompt; dp.Prompt != "" {
+		role, err := parseOpenAIRole(dp.Role)
+		if err != nil {
+			return nil, err
+		}
+		activated.Push(lorebookEntryType{
+			Content:   dp.Prompt,
+			Role:      role,
+			Order:     1024,
+			activated: true,
+			LorebookEntryExtension: ccv3.LorebookEntryExtension{
+				Position: ccv3.LorebookInsertionAtDepth,
+				Depth:    dp.Depth,
+			},
+		})
 	}
 
 	wi := worldInfoType{}
@@ -88,7 +87,7 @@ func (c *cardType) checkWorldInfo(messages []message) (*worldInfoType, error) {
 		case ccv3.LorebookInsertionBottomOfAuthorsNote:
 			wi.BottomOfAuthorsNote.Unshift(entry)
 		default:
-			return nil, fmt.Errorf("invalid Lorebook entry: %v", entry.Position)
+			return nil, fmt.Errorf("invalid lorebook entry position: %v", entry.Position)
 		}
 	}
 	return &wi, nil
@@ -142,12 +141,12 @@ func newLorebookEntriesFromCCV3(entries []ccv3.LorebookEntry) (lorebookEntriesTy
 			activated: entry.Constant,
 		}
 		switch entry.Extensions.Role {
+		case ccv3.RoleSystem:
+			lorebookEntry.Role = system
 		case ccv3.RoleUser:
 			lorebookEntry.Role = user
 		case ccv3.RoleAssistant:
 			lorebookEntry.Role = assistant
-		case ccv3.RoleSystem:
-			lorebookEntry.Role = system
 		default:
 			return nil, fmt.Errorf("unknown role: %v", entry.Extensions.Role)
 		}
@@ -162,6 +161,11 @@ type lorebookEntriesType []lorebookEntryType
 func (le *lorebookEntriesType) Len() int                             { return len(*le) }
 func (le *lorebookEntriesType) Push(entries ...lorebookEntryType)    { *le = append(*le, entries...) }
 func (le *lorebookEntriesType) Unshift(entries ...lorebookEntryType) { *le = append(entries, *le...) }
+func (le *lorebookEntriesType) Copy() lorebookEntriesType {
+	copied := make(lorebookEntriesType, len(*le))
+	copy(copied, *le)
+	return copied
+}
 func (le *lorebookEntriesType) Sort() lorebookEntriesType {
 	sorted := make(lorebookEntriesType, len(*le))
 	copy(sorted, *le)
@@ -172,42 +176,69 @@ func (le *lorebookEntriesType) Sort() lorebookEntriesType {
 	*le = sorted
 	return sorted
 }
-func (le *lorebookEntriesType) Activated() lorebookEntriesType {
-	activated := make(lorebookEntriesType, 0, len(*le))
+func (le *lorebookEntriesType) Role(role roleType) lorebookEntriesType {
+	filtered := make(lorebookEntriesType, 0, len(*le))
 	for _, entry := range *le {
-		if entry.activated {
-			activated = append(activated, entry)
+		if entry.Role == role {
+			filtered = append(filtered, entry)
 		}
 	}
-	return activated
+	return filtered
+}
+func (le *lorebookEntriesType) Roles() []roleType {
+	roleSet := make(map[roleType]struct{})
+	for _, entry := range *le {
+		roleSet[entry.Role] = struct{}{}
+	}
+	roles := make([]roleType, 0, len(roleSet))
+	for role := range roleSet {
+		roles = append(roles, role)
+	}
+	return roles
+}
+func (le *lorebookEntriesType) Contents() []string {
+	contents := make([]string, 0, len(*le))
+	for _, entry := range *le {
+		contents = append(contents, entry.Content)
+	}
+	return contents
+}
+func (le *lorebookEntriesType) Depth(min, max int) lorebookEntriesType {
+	filtered := make(lorebookEntriesType, 0, len(*le))
+	for _, entry := range *le {
+		if entry.Depth >= min && (max < 0 || entry.Depth <= max) {
+			filtered = append(filtered, entry)
+		}
+	}
+	return filtered
 }
 
 type worldInfoBufferType struct {
 	startDepth int
 	buf        strings.Builder
 	data       ccv3.CharacterCardData
-	messages   []message
+	messages   []messageType
 }
 
-func (c *cardType) buildWorldInfoBuffer(messages []message) worldInfoBufferType {
+func (c *cardType) buildWorldInfoBuffer(messages []messageType) worldInfoBufferType {
 	return worldInfoBufferType{
 		data:     c.data,
 		messages: messages,
 	}
 }
 
-func (w *worldInfoBufferType) Get(e lorebookEntryType) string {
+func (w *worldInfoBufferType) Write(e lorebookEntryType) int {
 	if e.Depth <= w.startDepth {
-		return ""
+		return 0
 	}
 
 	if e.Depth < 0 {
 		log.Error().Msg(fmt.Sprintf("invalid entry %v", e))
-		return ""
+		return 0
 	}
 
 	const delim = "\x01\n"
-	defer w.buf.Reset()
+	w.buf.Reset()
 
 	for i, msg := range w.messages {
 		if i != 0 {
@@ -229,7 +260,7 @@ func (w *worldInfoBufferType) Get(e lorebookEntryType) string {
 	}
 	if e.MatchCharacterDepthPrompt {
 		w.buf.WriteString(delim)
-		w.buf.WriteString(w.data.Extensions.DepthPrompt)
+		w.buf.WriteString(w.data.Extensions.DepthPrompt.Prompt)
 	}
 	if e.MatchScenario {
 		w.buf.WriteString(delim)
@@ -240,10 +271,10 @@ func (w *worldInfoBufferType) Get(e lorebookEntryType) string {
 		w.buf.WriteString(w.data.CreatorNotes)
 	}
 
-	return w.buf.String()
+	return w.buf.Len()
 }
 
-func (w *worldInfoBufferType) MatchKeys(haystack, needle string, e lorebookEntryType) bool {
+func (w *worldInfoBufferType) Match(needle string, e lorebookEntryType) bool {
 	re, err := w.parseRegex(needle)
 	if err == nil {
 		return re.MatchString(needle)
@@ -251,6 +282,7 @@ func (w *worldInfoBufferType) MatchKeys(haystack, needle string, e lorebookEntry
 	log.Debug().Err(err).Str("needle", needle).Msg("Ignoring invalid regex pattern.")
 
 	// Fallback to substring match
+	haystack := w.buf.String()
 	if !e.CaseSensitive {
 		haystack = strings.ToLower(haystack)
 		needle = strings.ToLower(needle)
