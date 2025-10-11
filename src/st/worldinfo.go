@@ -2,6 +2,7 @@ package st
 
 import (
 	"fmt"
+	"math/rand"
 	"regexp"
 	"sort"
 	"strings"
@@ -9,16 +10,6 @@ import (
 	"github.com/cloudwindy/xitu/st/ccv3"
 	"github.com/rs/zerolog/log"
 )
-
-func (c *cardType) applyLorebookEntries(messages *[]messageType, entries lorebookEntriesType) {
-	if len(entries) > 0 {
-		for _, role := range entries.Roles() {
-			roleEntries := entries.Role(role)
-			content := strings.Join(roleEntries.Contents(), "\n")
-			c.pushPrompt(messages, role, content)
-		}
-	}
-}
 
 func (c *cardType) checkWorldInfo(messages []messageType) (*worldInfoType, error) {
 	if len(c.lorebook) == 0 {
@@ -30,15 +21,23 @@ func (c *cardType) checkWorldInfo(messages []messageType) (*worldInfoType, error
 	lorebook := c.lorebook.Copy()
 
 	for _, entry := range lorebook.Sort() {
+		// Not Activated if uses probability and roll fails
+		if entry.UseProbability && !roll(entry.Probability) {
+			continue
+		}
+
+		// Activated if constant
 		if entry.activated {
 			activated.Push(entry)
 			continue
 		}
 
+		// Not Activated if no text to match against
 		if buf.Write(entry) == 0 {
 			continue
 		}
 
+		// Activated if matches any key
 		for _, key := range entry.Keys {
 			if buf.Match(key, entry) {
 				entry.activated = true
@@ -132,6 +131,10 @@ func newLorebookEntriesFromCCV3(entries []ccv3.LorebookEntry) (lorebookEntriesTy
 	lorebookEntries := make(lorebookEntriesType, 0, len(entries))
 	for _, entry := range entries {
 		if !entry.Enabled {
+			continue
+		}
+		if entry.Extensions.Vectorized {
+			log.Warn().Str("name", entry.Name).Msg("Vectorized lorebook entries are not supported and will be ignored.")
 			continue
 		}
 		lorebookEntry := lorebookEntryType{
@@ -289,12 +292,19 @@ func (w *worldInfoBufferType) Match(needle string, e lorebookEntryType) bool {
 	}
 
 	if e.MatchWholeWords {
-		// Unsupported
-		log.Debug().Str("needle", needle).Msg("Ignoring unsupported whole-word match.")
+		keywords := reKeywords.FindAllString(needle, -1)
+		if len(keywords) > 1 {
+			// All keywords must match
+			return strings.Contains(haystack, needle)
+		}
+		// Match whole word
+		reWholeWord := regexp.MustCompile(`(?:^|\\W)(` + regexp.QuoteMeta(needle) + `)(?:$|\\W)`)
+		return reWholeWord.MatchString(haystack)
 	}
 	return strings.Contains(haystack, needle)
 }
 
+var reKeywords = regexp.MustCompile(`\s+`)
 var reRegex = regexp.MustCompile(`^/([\w\W]+?)/([gimsuy]*)$`)
 var reUnescapedSlash = regexp.MustCompile(`(^|[^\\])/`)
 
@@ -323,4 +333,8 @@ func (w *worldInfoBufferType) parseRegex(pattern string) (*regexp.Regexp, error)
 	}
 	re = strings.ReplaceAll(re, "\\/", "/")
 	return regexp.Compile(re)
+}
+
+func roll(probability int) bool {
+	return rand.Intn(100)+1 < probability
 }

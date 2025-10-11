@@ -37,7 +37,8 @@ func newCaseInsensitiveReplacer(oldnew ...string) *caseInsensitiveReplacer {
 		if oldnew[i] == "" {
 			panic("newCaseInsensitiveReplacer: empty old string")
 		}
-		toReplaces = append(toReplaces, regexp.MustCompile("(?i)"+oldnew[i]))
+		re := regexp.MustCompile("(?i)" + regexp.QuoteMeta(oldnew[i]))
+		toReplaces = append(toReplaces, re)
 		replaceWiths = append(replaceWiths, oldnew[i+1])
 	}
 	return &caseInsensitiveReplacer{

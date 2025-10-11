@@ -3,6 +3,7 @@ package st
 import (
 	"encoding/json"
 	"fmt"
+	"strings"
 
 	"github.com/cloudwindy/xitu/st/ccv3"
 	"github.com/rs/zerolog/log"
@@ -151,4 +152,14 @@ func (c *cardType) pushPrompt(messages *[]messageType, role roleType, prompt str
 		Role:    role,
 		Content: c.evalMacros(prompt),
 	})
+}
+
+func (c *cardType) applyLorebookEntries(messages *[]messageType, entries lorebookEntriesType) {
+	if len(entries) > 0 {
+		for _, role := range entries.Roles() {
+			roleEntries := entries.Role(role)
+			content := strings.Join(roleEntries.Contents(), "\n")
+			c.pushPrompt(messages, role, content)
+		}
+	}
 }
