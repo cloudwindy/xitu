@@ -65,7 +65,7 @@ func GinLogger() gin.HandlerFunc {
 			Str("ip", c.ClientIP()).
 			Dur("latency", latency).
 			Str("user_agent", c.Request.UserAgent()).
-			Msg("Request processed.")
+			Msg("Request processed")
 	}
 }
 
@@ -95,7 +95,7 @@ func loadCharacter(characterID string) (st.Card, error) {
 
 func main() {
 	if err := godotenv.Load(); err != nil {
-		log.Warn().Err(err).Msg("Failed to read env file, reading from environment.")
+		log.Warn().Err(err).Msg("Failed to read env file, reading from environment")
 	}
 	mode := os.Getenv("XITU_MODE")
 	if mode == "debug" {
@@ -103,14 +103,14 @@ func main() {
 	} else if mode == "release" {
 		gin.SetMode(gin.ReleaseMode)
 	} else {
-		log.Warn().Msg("XITU_MODE not valid, using 'debug'.")
+		log.Warn().Msg("XITU_MODE not valid, using 'debug'")
 		gin.SetMode(gin.DebugMode)
 	}
 	setupLogger()
 
 	info, ok := debug.ReadBuildInfo()
 	if !ok {
-		log.Warn().Msg("Failed to read build info.")
+		log.Warn().Msg("Failed to read build info")
 	} else {
 		log.Info().Msg("xitu " + info.Main.Version)
 	}
@@ -120,7 +120,7 @@ func main() {
 	model := os.Getenv("OPENAI_MODEL")
 
 	if baseURL == "" || apiKey == "" || model == "" {
-		log.Fatal().Msg("OpenAI API configuration is missing. Please set OPENAI_BASE_URL, OPENAI_API_KEY, and OPENAI_MODEL in your .env file.")
+		log.Fatal().Msg("OpenAI API configuration is missing. Please set OPENAI_BASE_URL, OPENAI_API_KEY, and OPENAI_MODEL in your .env file")
 	}
 
 	r := gin.New()
@@ -128,8 +128,7 @@ func main() {
 	r.Use(gin.Recovery())
 
 	r.GET("/", func(c *gin.Context) {
-		log.Info().Msg("OpenAI API call received")
-		c.String(http.StatusOK, "AI Chat Server is running.")
+		c.String(http.StatusOK, "XITU is running")
 	})
 
 	r.GET("/api/character/:id", func(c *gin.Context) {
@@ -168,7 +167,7 @@ func main() {
 
 			messages, err := card.Apply(req.History)
 			if err != nil {
-				log.Error().Err(err).Str("character_id", req.CharacterID).Msg("Failed to apply messages.")
+				log.Error().Err(err).Str("character_id", req.CharacterID).Msg("Failed to apply messages")
 				c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 				return
 			}
@@ -196,7 +195,7 @@ func main() {
 
 		messages, err := card.Apply(req.History)
 		if err != nil {
-			log.Error().Err(err).Str("character_id", req.CharacterID).Msg("Failed to apply messages.")
+			log.Error().Err(err).Str("character_id", req.CharacterID).Msg("Failed to apply messages")
 			c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 			return
 		}
@@ -211,8 +210,8 @@ func main() {
 			},
 		)
 		if err != nil {
-			log.Error().Err(err).Str("character_id", req.CharacterID).Msg("OpenAI API call failed.")
-			c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to get response from AI."})
+			log.Error().Err(err).Str("character_id", req.CharacterID).Msg("OpenAI API call failed")
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to get response from AI"})
 			return
 		}
 
@@ -227,6 +226,6 @@ func main() {
 	})
 
 	if err := r.Run(":8080"); err != nil {
-		log.Fatal().Err(err).Msg("Failed to start server.")
+		log.Fatal().Err(err).Msg("Failed to start server")
 	}
 }

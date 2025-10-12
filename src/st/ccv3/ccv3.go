@@ -114,9 +114,9 @@ type LorebookEntryExtension struct {
 	PreventRecursion          bool                      `json:"prevent_recursion,omitempty"`
 	DelayUntilRecursion       bool                      `json:"delay_until_recursion,omitempty"`
 	ScanDepth                 int                       `json:"scan_depth,omitempty"`
-	MatchWholeWords           bool                      `json:"match_whole_words,omitempty"`
+	MatchWholeWords           *bool                     `json:"match_whole_words,omitempty"`
 	UseGroupScoring           bool                      `json:"use_group_scoring,omitempty"`
-	CaseSensitive             bool                      `json:"case_sensitive,omitempty"`
+	CaseSensitive             *bool                     `json:"case_sensitive,omitempty"`
 	AutomationId              string                    `json:"automation_id,omitempty"`
 	Role                      Role                      `json:"role,omitempty"`
 	Vectorized                bool                      `json:"vectorized,omitempty"`
