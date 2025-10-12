@@ -112,7 +112,7 @@ type LorebookEntryExtension struct {
 	GroupOverride             bool                      `json:"group_override,omitempty"`
 	GroupWeight               int                       `json:"group_weight,omitempty"`
 	PreventRecursion          bool                      `json:"prevent_recursion,omitempty"`
-	DelayUntilRecursion       bool                      `json:"delay_until_recursion,omitempty"`
+	DelayUntilRecursion       any                       `json:"delay_until_recursion,omitempty"`
 	ScanDepth                 int                       `json:"scan_depth,omitempty"`
 	MatchWholeWords           *bool                     `json:"match_whole_words,omitempty"`
 	UseGroupScoring           bool                      `json:"use_group_scoring,omitempty"`
@@ -149,22 +149,6 @@ const (
 	*/
 	LorebookInsertionAfterCharDefs
 	/*
-		Before Example Messages:
-		The World Info entry is parsed as an example dialogue block and inserted before the examples provided by the character card.
-	*/
-	LorebookInsertionBeforeExampleMessages
-	/*
-		After Example Messages:
-		The World Info entry is parsed as an example dialogue block and inserted after the examples provided by the character card.
-	*/
-	LorebookInsertionAfterExampleMessages
-	/*
-		@D:
-		World Info entry is inserted at a specific depth in the chat.
-		Depth 0 being the bottom of the prompt.
-	*/
-	LorebookInsertionAtDepth
-	/*
 		Top of AN:
 		World Info entry is inserted at the top of Author's Note content.
 		Has a variable impact depending on the Author's Note position.
@@ -176,4 +160,20 @@ const (
 		Has a variable impact depending on the Author's Note position.
 	*/
 	LorebookInsertionBottomOfAuthorsNote
+	/*
+		@D:
+		World Info entry is inserted at a specific depth in the chat.
+		Depth 0 being the bottom of the prompt.
+	*/
+	LorebookInsertionAtDepth
+	/*
+		Before Example Messages:
+		The World Info entry is parsed as an example dialogue block and inserted before the examples provided by the character card.
+	*/
+	LorebookInsertionBeforeExampleMessages
+	/*
+		After Example Messages:
+		The World Info entry is parsed as an example dialogue block and inserted after the examples provided by the character card.
+	*/
+	LorebookInsertionAfterExampleMessages
 )

@@ -14,6 +14,7 @@ import (
 
 func (c *cardType) checkWorldInfo(messages []messageType) (*worldInfoType, error) {
 	if len(c.lorebook) == 0 {
+		log.Debug().Msg("No lorebook found")
 		return nil, nil
 	}
 	lorebook := c.lorebook.Copy()
@@ -35,11 +36,19 @@ func (c *cardType) checkWorldInfo(messages []messageType) (*worldInfoType, error
 				continue
 			}
 
-			// Not Activated if uses probability and roll fails
-			if entry.UseProbability && !roll(entry.Probability) {
-				lorebook[i].rollFailed = true
-				log.Debug().Str("name", entry.Name).Int("probability", entry.Probability).Msg("Lorebook entry roll failed")
-				continue
+			// Not Activated if uses probability and roll fails or previously failed
+			if entry.UseProbability {
+				if entry.rollFailed {
+					continue
+				}
+				if !roll(entry.Probability) {
+					lorebook[i].rollFailed = true
+					log.Debug().Str("name", entry.Name).Int("probability", entry.Probability).Msg("Lorebook entry roll failed")
+					continue
+				}
+				if entry.Probability != 0 && entry.Probability != 100 {
+					log.Debug().Str("name", entry.Name).Int("probability", entry.Probability).Msg("Lorebook entry roll success")
+				}
 			}
 
 			// Activated if constant
@@ -51,7 +60,7 @@ func (c *cardType) checkWorldInfo(messages []messageType) (*worldInfoType, error
 			}
 
 			// Not Activated if delayed until recursion and not in recursion state
-			if entry.DelayUntilRecursion && state != scanStateRecursion {
+			if entry.DelayUntilRecursion != nil && entry.DelayUntilRecursion != 0 && entry.DelayUntilRecursion != false && state != scanStateRecursion {
 				log.Debug().Str("name", entry.Name).Msg("Lorebook entry delayed until recursion")
 				continue
 			}
@@ -102,6 +111,11 @@ func (c *cardType) checkWorldInfo(messages []messageType) (*worldInfoType, error
 		log.Debug().Int("remaining", remaining).Msg("checkWorldInfo iteration end")
 	}
 
+	if activated.Len() == 0 {
+		log.Debug().Msg("No lorebook entries activated")
+		return nil, nil
+	}
+
 	if dp := c.data.Extensions.DepthPrompt; dp.Prompt != "" {
 		role, err := parseOpenAIRole(dp.Role)
 		if err != nil {
@@ -118,10 +132,45 @@ func (c *cardType) checkWorldInfo(messages []messageType) (*worldInfoType, error
 				Depth:    dp.Depth,
 			},
 		})
-		log.Debug().Str("role", dp.Role).Int("depth", dp.Depth).Msg("DepthPrompt activated")
+		log.Debug().
+			Str("role", dp.Role).
+			Int("depth", dp.Depth).
+			Msg("DepthPrompt activated")
+	}
+
+	topOfAuthorsNote := make(lorebookEntriesType, 0)
+	bottomOfAuthorsNote := make(lorebookEntriesType, 0)
+	for _, entry := range activated.Sort() {
+		switch entry.Position {
+		case ccv3.LorebookInsertionTopOfAuthorsNote:
+			topOfAuthorsNote.Unshift(entry)
+		case ccv3.LorebookInsertionBottomOfAuthorsNote:
+			bottomOfAuthorsNote.Unshift(entry)
+		default:
+		}
 	}
 
 	wi := worldInfoType{}
+	if topOfAuthorsNote.Len()+bottomOfAuthorsNote.Len() > 0 {
+		authorsNote := append(topOfAuthorsNote.Contents(), bottomOfAuthorsNote.Contents()...)
+		activated.Push(lorebookEntryType{
+			Name:      "AuthorsNote",
+			Content:   strings.Join(authorsNote, "\n"),
+			Role:      system,
+			Order:     1024,
+			activated: true,
+			LorebookEntryExtension: ccv3.LorebookEntryExtension{
+				Position: ccv3.LorebookInsertionAtDepth,
+				Depth:    4,
+			},
+		})
+		log.Debug().
+			Str("role", "system").
+			Int("depth", 4).
+			Int("lines", len(authorsNote)).
+			Msg("AuthorsNote activated")
+		wi.authorsNotesCount += len(authorsNote)
+	}
 	for _, entry := range activated.Sort() {
 		switch entry.Position {
 		case ccv3.LorebookInsertionBeforeCharDefs:
@@ -134,14 +183,10 @@ func (c *cardType) checkWorldInfo(messages []messageType) (*worldInfoType, error
 			wi.AfterExampleMessages.Unshift(entry)
 		case ccv3.LorebookInsertionAtDepth:
 			wi.AtDepth.Unshift(entry)
-		case ccv3.LorebookInsertionTopOfAuthorsNote:
-			wi.TopOfAuthorsNote.Unshift(entry)
-		case ccv3.LorebookInsertionBottomOfAuthorsNote:
-			wi.BottomOfAuthorsNote.Unshift(entry)
 		default:
-			return nil, fmt.Errorf("invalid lorebook entry position: %v", entry.Position)
 		}
 	}
+
 	log.Debug().Int("count", wi.Len()).Msg("WorldInfo built")
 	return &wi, nil
 }
@@ -170,17 +215,19 @@ func (s scanStateType) String() string {
 type worldInfoType struct {
 	BeforeCharDefs        lorebookEntriesType
 	AfterCharDefs         lorebookEntriesType
+	AtDepth               lorebookEntriesType
 	BeforeExampleMessages lorebookEntriesType
 	AfterExampleMessages  lorebookEntriesType
-	AtDepth               lorebookEntriesType
-	TopOfAuthorsNote      lorebookEntriesType
-	BottomOfAuthorsNote   lorebookEntriesType
+
+	authorsNotesCount int
 }
 
 func (l *worldInfoType) Len() int {
-	return len(l.BeforeCharDefs) + len(l.AfterCharDefs) +
-		len(l.BeforeExampleMessages) + len(l.AfterExampleMessages) +
-		len(l.AtDepth) + len(l.TopOfAuthorsNote) + len(l.BottomOfAuthorsNote)
+	return l.BeforeCharDefs.Len() + l.AfterCharDefs.Len() + l.AtDepth.Len()
+}
+
+func (l *worldInfoType) ActivatedCount() int {
+	return l.Len() + l.authorsNotesCount
 }
 
 type lorebookEntryType struct {
@@ -288,7 +335,7 @@ func (le *lorebookEntriesType) Depth(min, max int) lorebookEntriesType {
 func (le *lorebookEntriesType) Recursive() lorebookEntriesType {
 	filtered := make(lorebookEntriesType, 0, len(*le))
 	for _, entry := range *le {
-		if !entry.PreventRecursion && !entry.rollFailed {
+		if !entry.PreventRecursion {
 			filtered = append(filtered, entry)
 		}
 	}
@@ -297,60 +344,63 @@ func (le *lorebookEntriesType) Recursive() lorebookEntriesType {
 
 func (c *cardType) buildWorldInfoBuffer(messages []messageType) worldInfoBufferType {
 	w := worldInfoBufferType{
-		data: c.data,
+		Data:        c.data,
+		UserPersona: c.UserPersona,
 	}
-	for _, msg := range messages {
-		w.WriteDepth(msg.Content)
-	}
+	w.WriteDepth(messages)
 	return w
 }
 
 const worldInfoDelim = "\x01\n"
 
 type worldInfoBufferType struct {
-	startDepth     int
+	Data        ccv3.CharacterCardData
+	UserPersona string
+
 	haystackBuffer bytes.Buffer
-	depthBuffer    bytes.Buffer
+	depthBuffer    []string
 	recurseBuffer  bytes.Buffer
-	data           ccv3.CharacterCardData
 }
 
 func (w *worldInfoBufferType) Load(e lorebookEntryType) int {
-	if e.Depth <= w.startDepth {
-		return 0
-	}
-
-	if e.Depth < 0 {
+	if e.ScanDepth < 0 {
 		log.Error().Msg(fmt.Sprintf("invalid entry %v", e))
 		return 0
 	}
 	w.haystackBuffer.Reset()
 
-	_, _ = w.depthBuffer.WriteTo(&w.haystackBuffer)
+	if e.ScanDepth <= 0 {
+		e.ScanDepth = 2
+	}
+
+	for _, msg := range w.depthBuffer[:e.ScanDepth] {
+		w.haystackBuffer.WriteString(worldInfoDelim)
+		w.haystackBuffer.WriteString(msg)
+	}
 
 	if e.MatchPersonaDescription {
 		w.haystackBuffer.WriteString(worldInfoDelim)
-		w.haystackBuffer.WriteString(DefaultUserPersona)
+		w.haystackBuffer.WriteString(w.UserPersona)
 	}
 	if e.MatchCharacterDescription {
 		w.haystackBuffer.WriteString(worldInfoDelim)
-		w.haystackBuffer.WriteString(w.data.Description)
+		w.haystackBuffer.WriteString(w.Data.Description)
 	}
 	if e.MatchCharacterPersonality {
 		w.haystackBuffer.WriteString(worldInfoDelim)
-		w.haystackBuffer.WriteString(w.data.Personality)
+		w.haystackBuffer.WriteString(w.Data.Personality)
 	}
 	if e.MatchCharacterDepthPrompt {
 		w.haystackBuffer.WriteString(worldInfoDelim)
-		w.haystackBuffer.WriteString(w.data.Extensions.DepthPrompt.Prompt)
+		w.haystackBuffer.WriteString(w.Data.Extensions.DepthPrompt.Prompt)
 	}
 	if e.MatchScenario {
 		w.haystackBuffer.WriteString(worldInfoDelim)
-		w.haystackBuffer.WriteString(w.data.Scenario)
+		w.haystackBuffer.WriteString(w.Data.Scenario)
 	}
 	if e.MatchCreatorNotes {
 		w.haystackBuffer.WriteString(worldInfoDelim)
-		w.haystackBuffer.WriteString(w.data.CreatorNotes)
+		w.haystackBuffer.WriteString(w.Data.CreatorNotes)
 	}
 	if w.recurseBuffer.Len() > 0 {
 		w.haystackBuffer.WriteString(worldInfoDelim)
@@ -369,7 +419,6 @@ func (w *worldInfoBufferType) Match(needle string, e lorebookEntryType) bool {
 	if err == nil {
 		return re.MatchString(needle)
 	}
-	log.Debug().Err(err).Str("needle", needle).Msg("Ignoring invalid regex pattern.")
 
 	// Fallback to substring match
 	haystack := w.haystackBuffer.String()
@@ -378,26 +427,34 @@ func (w *worldInfoBufferType) Match(needle string, e lorebookEntryType) bool {
 		needle = strings.ToLower(needle)
 	}
 
-	if e.MatchWholeWords == nil || *e.MatchWholeWords {
+	asciiOnly := regexp.MustCompile(`^[\x00-\x7F]+$`).MatchString(needle)
+	if (e.MatchWholeWords == nil || *e.MatchWholeWords) && asciiOnly {
 		keywords := reKeywords.FindAllString(needle, -1)
 		if len(keywords) > 1 {
 			// All keywords must match
 			return strings.Contains(haystack, needle)
 		}
 		// Match whole word
-		reWholeWord := regexp.MustCompile(`(?:^|\\W)(` + regexp.QuoteMeta(needle) + `)(?:$|\\W)`)
+		reWholeWord := regexp.MustCompile(`\b(` + regexp.QuoteMeta(needle) + `)\b`)
 		return reWholeWord.MatchString(haystack)
 	}
 	return strings.Contains(haystack, needle)
 }
 
-func (w *worldInfoBufferType) WriteDepth(str string) {
-	w.depthBuffer.WriteString(worldInfoDelim)
-	w.depthBuffer.WriteString(str)
+func (w *worldInfoBufferType) WriteDepth(messages []messageType) {
+	if len(w.depthBuffer) > 0 {
+		w.depthBuffer = w.depthBuffer[:0]
+	}
+	for i := len(messages) - 1; i >= 0; i-- {
+		str := messages[i].Content
+		if str != "" {
+			w.depthBuffer = append(w.depthBuffer, str)
+		}
+	}
 }
 
 func (w *worldInfoBufferType) WriteRecurse(str string) {
-	w.depthBuffer.WriteString(worldInfoDelim)
+	w.recurseBuffer.WriteString(worldInfoDelim)
 	w.recurseBuffer.WriteString(str)
 }
 
@@ -406,8 +463,8 @@ func (w *worldInfoBufferType) ResetRecurse() {
 }
 
 func (w *worldInfoBufferType) Reset() {
+	w.depthBuffer = w.depthBuffer[:0]
 	w.haystackBuffer.Reset()
-	w.depthBuffer.Reset()
 	w.recurseBuffer.Reset()
 }
 

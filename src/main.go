@@ -3,9 +3,12 @@ package main
 import (
 	"context"
 	"fmt"
+	"io"
 	"net/http"
 	"os"
 	"runtime/debug"
+	"slices"
+	"strings"
 	"time"
 
 	"github.com/cloudwindy/xitu/st"
@@ -17,8 +20,10 @@ import (
 )
 
 type ChatRequest struct {
-	CharacterID string                         `json:"character_id" binding:"required"`
-	History     []openai.ChatCompletionMessage `json:"history"`
+	Model       string                         `json:"model" binding:"required"`
+	Messages    []openai.ChatCompletionMessage `json:"messages" binding:"required"`
+	Temperature *float32                       `json:"temperature,omitempty"`
+	Stream      *bool                          `json:"stream,omitempty"`
 }
 
 func setupLogger() {
@@ -70,6 +75,9 @@ func GinLogger() gin.HandlerFunc {
 }
 
 var cache = make(map[string]st.Card)
+var validApiKeys = []string{
+	"sk-96oyf8lafovtov62", // Example key for testing
+}
 
 func loadCharacter(characterID string) (st.Card, error) {
 	if card, ok := cache[characterID]; ok {
@@ -151,23 +159,23 @@ func main() {
 	})
 
 	if gin.Mode() == gin.DebugMode {
-		r.POST("/api/debug/chat", func(c *gin.Context) {
-			var req ChatRequest
+		r.POST("/api/debug/chat/prompt", func(c *gin.Context) {
+			req := ChatRequest{}
 			if err := c.ShouldBindJSON(&req); err != nil {
 				log.Warn().Err(err).Msg("Invalid request body")
 				c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid request body"})
 				return
 			}
 
-			card, err := loadCharacter(req.CharacterID)
+			card, err := loadCharacter(req.Model)
 			if err != nil {
 				c.JSON(http.StatusNotFound, gin.H{"error": err.Error()})
 				return
 			}
 
-			messages, err := card.Apply(req.History)
+			messages, err := card.Apply(req.Messages)
 			if err != nil {
-				log.Error().Err(err).Str("character_id", req.CharacterID).Msg("Failed to apply messages")
+				log.Error().Err(err).Str("character_id", req.Model).Msg("Failed to apply messages")
 				c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 				return
 			}
@@ -176,15 +184,27 @@ func main() {
 		})
 	}
 
-	r.POST("/api/chat", func(c *gin.Context) {
-		var req ChatRequest
+	r.POST("/api/v1/chat/completions", func(c *gin.Context) {
+		req := ChatRequest{}
 		if err := c.ShouldBindJSON(&req); err != nil {
 			log.Warn().Err(err).Msg("Invalid request body")
 			c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid request body"})
 			return
 		}
 
-		card, err := loadCharacter(req.CharacterID)
+		auth, ok := strings.CutPrefix(c.GetHeader("Authorization"), "Bearer ")
+		if !ok {
+			log.Warn().Str("header", c.GetHeader("Authorization")).Msg("Missing or invalid Authorization header")
+			c.JSON(http.StatusUnauthorized, gin.H{"error": "Missing or invalid Authorization header"})
+			return
+		}
+		if !slices.Contains(validApiKeys, auth) {
+			log.Warn().Str("api_key", auth).Msg("Invalid API key")
+			c.JSON(http.StatusUnauthorized, gin.H{"error": "Invalid API key"})
+			return
+		}
+
+		card, err := loadCharacter(req.Model)
 		if err != nil {
 			c.JSON(http.StatusNotFound, gin.H{"error": err.Error()})
 			return
@@ -193,36 +213,40 @@ func main() {
 		config := openai.DefaultConfig(apiKey)
 		config.BaseURL = baseURL
 
-		messages, err := card.Apply(req.History)
+		messages, err := card.Apply(req.Messages)
 		if err != nil {
-			log.Error().Err(err).Str("character_id", req.CharacterID).Msg("Failed to apply messages")
+			log.Error().Err(err).Str("character_id", req.Model).Msg("Failed to apply messages")
 			c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 			return
 		}
 
 		client := openai.NewClientWithConfig(config)
-		resp, err := client.CreateChatCompletion(
-			context.Background(),
-			openai.ChatCompletionRequest{
-				Model:       model,
-				Messages:    messages,
-				Temperature: 1,
-			},
-		)
+		openAIReq := openai.ChatCompletionRequest{
+			Model:       model,
+			Messages:    messages,
+			Temperature: 1,
+		}
+		if req.Temperature != nil {
+			openAIReq.Temperature = *req.Temperature
+		}
+		stream, err := client.CreateChatCompletionStream(context.Background(), openAIReq)
 		if err != nil {
-			log.Error().Err(err).Str("character_id", req.CharacterID).Msg("OpenAI API call failed")
+			log.Error().Err(err).Str("character_id", req.Model).Msg("OpenAI API call failed")
 			c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to get response from AI"})
 			return
 		}
-
-		if len(resp.Choices) == 0 {
-			log.Error().Str("character_id", req.CharacterID).Msg("AI returned an empty response")
-			c.JSON(http.StatusInternalServerError, gin.H{"error": "AI returned an empty response"})
+		c.Stream(func(w io.Writer) bool {
+			response, err := stream.Recv()
+			if err != nil {
+				return false
+			}
+			c.SSEvent("message", response)
+			return true
+		})
+		if err = stream.Close(); err != nil {
+			log.Error().Err(err).Msg("Failed to close stream")
 			return
 		}
-
-		aiReply := resp.Choices[0].Message.Content
-		c.JSON(http.StatusOK, gin.H{"reply": aiReply})
 	})
 
 	if err := r.Run(":8080"); err != nil {

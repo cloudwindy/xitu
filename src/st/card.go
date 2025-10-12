@@ -10,11 +10,6 @@ import (
 	"github.com/sashabaranov/go-openai"
 )
 
-var (
-	DefaultUserName    = "用户"
-	DefaultUserPersona = ""
-)
-
 // Card 定义一个 SillyTavern 角色卡
 type Card interface {
 	// GetName 返回角色名称
@@ -25,8 +20,15 @@ type Card interface {
 	Apply([]openai.ChatCompletionMessage) ([]openai.ChatCompletionMessage, error)
 }
 
+type CardSettings struct {
+	UserName       string
+	UserPersona    string
+	NewMainChat    string
+	NewExampleChat string
+}
+
 // NewCard 解析并返回一个新的 Card 实例
-func NewCard(data []byte) (Card, error) {
+func NewCard(data []byte, settings ...CardSettings) (Card, error) {
 	c := ccv3.CharacterCard{}
 	if err := json.Unmarshal(data, &c); err != nil {
 		return nil, fmt.Errorf("failed to unmarshal JSON: %w", err)
@@ -48,12 +50,30 @@ func NewCard(data []byte) (Card, error) {
 		log.Debug().Int("count", len(c.Data.CharacterBook.Entries)).Msg("CharacterBook entries loaded")
 		card.lorebook = entries
 	}
+	if len(settings) > 0 {
+		card.CardSettings = settings[0]
+	}
+	card.initDefaultSettings()
 	return card, nil
 }
 
 type cardType struct {
 	data     ccv3.CharacterCardData
 	lorebook lorebookEntriesType
+	CardSettings
+}
+
+func (c *cardType) initDefaultSettings() {
+	s := &c.CardSettings
+	if s.UserName == "" {
+		s.UserName = "用户"
+	}
+	if s.NewMainChat == "" {
+		s.NewMainChat = "[Start a new Chat]"
+	}
+	if s.NewExampleChat == "" {
+		s.NewExampleChat = "[Example Chat]"
+	}
 }
 
 func (c *cardType) GetName() string {
@@ -70,36 +90,42 @@ func (c *cardType) Apply(openAIMessages []openai.ChatCompletionMessage) ([]opena
 		return nil, err
 	}
 
+	ev := log.Debug().Int("entries", c.lorebook.Len())
+
 	charDefs := c.buildCharDefMessages()
+	ev.Int("charDefs", len(charDefs))
+
+	examples := c.buildExampleMessages(c.data.MesExample)
+	ev.Int("examples", len(examples))
+
+	messages := make([]messageType, 0, len(charDefs)+len(history))
 	wi, err := c.checkWorldInfo(history)
 	if err != nil {
 		return nil, err
 	}
 	if wi == nil {
-		return c.toOpenAIMessages(append(charDefs, history...)), nil
+		messages = append(messages, charDefs...)
+		messages = append(messages, examples...)
+	} else {
+		c.applyLorebookEntries(&messages, wi.BeforeCharDefs)
+		messages = append(messages, charDefs...)
+		c.applyLorebookEntries(&messages, wi.AfterCharDefs)
+
+		beforeEM := c.buildExampleMessages(c.joinLorebookEntries(wi.BeforeExampleMessages))
+		afterEM := c.buildExampleMessages(c.joinLorebookEntries(wi.AfterExampleMessages))
+		messages = append(messages, beforeEM...)
+		messages = append(messages, examples...)
+		messages = append(messages, afterEM...)
+
+		ev.Int("activated", wi.ActivatedCount())
 	}
 
-	messages := make([]messageType, 0, len(charDefs)+len(history)+wi.Len())
+	mainChat := c.buildMainChat(history, wi)
+	messages = append(messages, mainChat...)
 
-	c.applyLorebookEntries(&messages, wi.BeforeCharDefs)
-	messages = append(messages, charDefs...)
-	c.applyLorebookEntries(&messages, wi.AfterCharDefs)
-
-	entries := lorebookEntriesType{}
-	for i, msg := range history {
-		if i == 0 {
-			entries = wi.AtDepth.Depth(len(history), -1)
-			if entries.Len() > 0 {
-				c.applyLorebookEntries(&messages, entries)
-			}
-		}
-		depth := len(history) - i - 1
-		messages = append(messages, msg)
-		entries = wi.AtDepth.Depth(depth, depth)
-		if entries.Len() > 0 {
-			c.applyLorebookEntries(&messages, entries)
-		}
-	}
+	ev.Int("mainChat", len(mainChat)).
+		Int("total", len(messages)).
+		Msg("CharacterCard applied")
 
 	return c.toOpenAIMessages(messages), nil
 }
@@ -131,27 +157,83 @@ func (c *cardType) toOpenAIMessages(messages []messageType) []openai.ChatComplet
 }
 
 func (c *cardType) buildCharDefMessages() []messageType {
-	charDefs := make([]messageType, 0)
-	if DefaultUserPersona != "" {
-		c.pushPrompt(&charDefs, system, DefaultUserPersona)
+	messages := make([]messageType, 0)
+	c.pushPrompt(&messages, system, c.UserPersona)
+	c.pushPrompt(&messages, system, c.data.Description)
+	c.pushPrompt(&messages, system, c.data.Personality)
+	c.pushPrompt(&messages, system, c.data.Scenario)
+	log.Debug().Int("count", len(c.lorebook)).Msg("CharDef built")
+	return messages
+}
+
+func (c *cardType) buildExampleMessages(mesExample string) []messageType {
+	if mesExample == "" {
+		return nil
 	}
-	if c.data.Description != "" {
-		c.pushPrompt(&charDefs, system, c.data.Description)
+	messages := make([]messageType, 0)
+	examples := strings.Split(mesExample, "<START>")
+	const delim = "\x01\x02"
+	replacer := strings.NewReplacer(
+		"{{user}}:", delim,
+		"{{char}}:", delim,
+	)
+	entries := 0
+	lines := 0
+	for _, example := range examples {
+		if c.processPrompt(example) == "" {
+			continue
+		}
+		c.pushPrompt(&messages, system, c.NewExampleChat)
+		entries++
+		example = replacer.Replace(example)
+		for _, line := range strings.Split(example, delim) {
+			if c.processPrompt(line) == "" {
+				continue
+			}
+			c.pushPrompt(&messages, system, line)
+			lines++
+		}
 	}
-	if c.data.Personality != "" {
-		c.pushPrompt(&charDefs, system, c.data.Personality)
+	log.Debug().Int("entries", entries).Int("lines", lines).Msg("ExampleMessages built")
+	return messages
+}
+
+func (c *cardType) buildMainChat(history []messageType, wi *worldInfoType) []messageType {
+	messages := make([]messageType, 0)
+	c.pushPrompt(&messages, system, c.NewMainChat)
+	entries := lorebookEntriesType{}
+	if wi == nil {
+		return append(messages, history...)
 	}
-	if c.data.Scenario != "" {
-		c.pushPrompt(&charDefs, system, c.data.Scenario)
+	for i, msg := range history {
+		if i == 0 {
+			entries = wi.AtDepth.Depth(len(history), -1)
+			if entries.Len() > 0 {
+				c.applyLorebookEntries(&messages, entries)
+			}
+		}
+		depth := len(history) - i - 1
+		messages = append(messages, msg)
+		entries = wi.AtDepth.Depth(depth, depth)
+		if entries.Len() > 0 {
+			c.applyLorebookEntries(&messages, entries)
+		}
 	}
-	return charDefs
+	return messages
 }
 
 func (c *cardType) pushPrompt(messages *[]messageType, role roleType, prompt string) {
-	*messages = append(*messages, messageType{
-		Role:    role,
-		Content: c.evalMacros(prompt),
-	})
+	if prompt != "" {
+		*messages = append(*messages, messageType{
+			Role:    role,
+			Content: c.processPrompt(prompt),
+		})
+	}
+}
+
+func (c *cardType) processPrompt(prompt string) string {
+	prompt = strings.Trim(prompt, " \r\n")
+	return c.evalMacros(prompt)
 }
 
 func (c *cardType) applyLorebookEntries(messages *[]messageType, entries lorebookEntriesType) {
@@ -162,4 +244,9 @@ func (c *cardType) applyLorebookEntries(messages *[]messageType, entries loreboo
 			c.pushPrompt(messages, role, content)
 		}
 	}
+}
+
+func (c *cardType) joinLorebookEntries(entries lorebookEntriesType) string {
+	entries.Sort()
+	return strings.Join(entries.Contents(), "\n")
 }

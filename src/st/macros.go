@@ -8,14 +8,14 @@ func (c *cardType) evalMacros(prompt string) string {
 	staticMacros := newCaseInsensitiveReplacer(
 		"{{newline}}", "\n",
 		"{{noop}}", "",
-		"{{user}}", DefaultUserName,
-		"<USER>", DefaultUserName,
+		"{{user}}", c.UserName,
+		"<USER>", c.UserName,
 		"{{char}}", c.data.Name,
 		"<BOT>", c.data.Name,
 		"{{description}}", c.data.Description,
 		"{{scenario}}", c.data.Scenario,
 		"{{personality}}", c.data.Personality,
-		"{{persona}}", DefaultUserPersona,
+		"{{persona}}", c.UserPersona,
 		"{{mesExamplesRaw}}", c.data.MesExample,
 	)
 	return staticMacros.Replace(prompt)
